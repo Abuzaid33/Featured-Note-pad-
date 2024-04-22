@@ -12,7 +12,10 @@ from docx.shared import Pt
 from docx.shared import RGBColor
 from docx.enum.text import WD_COLOR_INDEX
 from fpdf import FPDF
-from speech_recognition import WaitTimeoutError
+import vosk
+import pyaudio
+import json
+import threading
 ###############################
 # Section: Start page
 ###############################
@@ -47,7 +50,7 @@ class StartPage:
         start_button.place(relx=0.5, rely=0.6, anchor="center")
           
 class NoteCraftApp:
-    def __init__(self, root):
+    def __init__(self, root,model_path):
         self.root = root
         self.root.title("NoteCraft")
         self.root.state('zoomed')
@@ -59,8 +62,9 @@ class NoteCraftApp:
         background_label.place(relwidth=1, relheight=1)
         button_frame = ttk.Frame(root, style='TFrame', padding=(10, 5, 10, 5), relief='flat', borderwidth=2)
         button_frame.pack(pady=10, anchor='center')
-        icon_path = "images/download.png"
-        self.root.iconbitmap(icon_path)
+        icon_path = ("images/download.png")
+        self.root.iconbitmap("images/download.png")
+        self.model_path = model_path
         self.all_notes_window = None
         self.desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop')
         self.all_files_path = "All Files"
@@ -98,8 +102,7 @@ class NoteCraftApp:
         speech_to_text_button.grid(row=0, column=3, padx=5)
         speech_to_text_menu = tk.Menu(speech_to_text_button, tearoff=0)
         speech_to_text_button.configure(menu=speech_to_text_menu)
-        speech_to_text_menu.add_command(label="Offline", command=self.speech_to_text_offline)
-        speech_to_text_menu.add_command(label="Online", command=self.speech_to_text)
+        speech_to_text_menu.add_command(label="Speech to Text", command=self.start_speech_to_text_thread)
         image_to_text_button = ttk.Button(button_frame, text="Image to Text", command=self.image_to_text, style='TButton')
         all_notes_button = ttk.Button(button_frame, text="All Notes", command=self.show_all_notes, style='TButton')
         image_to_text_button.grid(row=0, column=4, padx=5)
@@ -303,26 +306,23 @@ class NoteCraftApp:
             self.show_edit_buttons()
 
     def cut_text(self):
-        selected_text = self.note_text.get(tk.SEL_FIRST, tk.SEL_LAST)
+        selected_text = self.note_text.get("sel.first", "sel.last")
         if selected_text:
             self.root.clipboard_clear()  
             self.root.clipboard_append(selected_text)  
-            self.note_text.delete(tk.SEL_FIRST, tk.SEL_LAST)
-            self.update_undo_redo_stack(f"Cut: {selected_text}")
-            
+            self.note_text.delete("sel.first", "sel.last")
+
     def copy_text(self):
         if self.note_text.tag_ranges(tk.SEL):
             selected_text = self.note_text.get(tk.SEL_FIRST, tk.SEL_LAST)
             self.root.clipboard_clear()
             self.root.clipboard_append(selected_text)
-            self.update_undo_redo_stack(f"Copy: {selected_text}")
 
     def paste_text(self):
         try:
             clipboard_content = self.root.clipboard_get()
             if clipboard_content:
                 self.note_text.insert(tk.INSERT, clipboard_content)
-                self.update_undo_redo_stack(f"Paste: {clipboard_content}")
         except tk.TclError:
             pass
  
@@ -373,42 +373,34 @@ class NoteCraftApp:
     # Section: Speech to Text offline Functions
     ###############################
             
-    def speech_to_text_offline(self):
-        recognizer = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("Say something...")
-            recognizer.adjust_for_ambient_noise(source)
-            try:
-                audio = recognizer.listen(source, timeout=5)
-            except WaitTimeoutError:
-                messagebox.showwarning("Speech to Text", "No speech detected. Please try again.")
-                return
-        try:
-            recognized_text = recognizer.recognize_sphinx(audio)
-            self.note_text.insert(tk.END, recognized_text + "\n")
-            messagebox.showinfo("Speech to Text", "Speech converted to text successfully!")
-        except sr.UnknownValueError:
-            messagebox.showwarning("Speech to Text", "Could not understand audio.")
-        except sr.RequestError as e:
-            messagebox.showerror("Speech to Text", f"Error: {e}")
-    ###############################
-    # Section: Speech to Text Functions
-    ###############################
-    def speech_to_text(self):
-        recognizer = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("Say something...")
-            recognizer.adjust_for_ambient_noise(source)
-            audio = recognizer.listen(source, timeout=5)
-        try:
-            text = recognizer.recognize_google(audio)
-            self.note_text.insert(tk.END, text + "\n")
-            messagebox.showinfo("Speech to Text", "Speech converted to text successfully!")
-        except sr.UnknownValueError:
-            messagebox.showwarning("Speech to Text", "Could not understand audio.")
-        except sr.RequestError as e:
-            messagebox.showerror("Speech to Text", f"Error connecting to Google Speech Recognition service: {e}")
+    def start_speech_to_text_thread(self):
+        threading.Thread(target=self.speech_to_text).start()
 
+    def speech_to_text(self):
+        recognizer = vosk.KaldiRecognizer(vosk.Model(self.model_path), 16000)
+        audio = pyaudio.PyAudio()
+        stream = audio.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=1024)
+        print("Listening...")
+        while True:
+            try:
+                data = stream.read(1024)
+                if len(data) == 0:
+                    break
+                if recognizer.AcceptWaveform(data):
+                    result = recognizer.Result()
+                    result_dict = json.loads(result)
+                    if 'text' in result_dict:
+                        text = result_dict['text']
+                        self.root.after(0, lambda: self.note_text.insert(tk.END, text))
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"Error: {e}")
+        print("Stopped listening.")
+        stream.stop_stream()
+        stream.close()
+        audio.terminate()
+    
     ###############################
     # Section: Image to Text Functions
     ###############################
@@ -532,7 +524,7 @@ class NoteCraftApp:
         
 if __name__ == "__main__":
     root = tk.Tk()
-    app = NoteCraftApp(root)
+    app = NoteCraftApp(root, "vosk-model-small-en-in-0.4")
     icon_path = "images/pic.png"  
     root.iconbitmap(icon_path)
     root.mainloop()
