@@ -102,7 +102,8 @@ class NoteCraftApp:
         speech_to_text_button.grid(row=0, column=3, padx=5)
         speech_to_text_menu = tk.Menu(speech_to_text_button, tearoff=0)
         speech_to_text_button.configure(menu=speech_to_text_menu)
-        speech_to_text_menu.add_command(label="Speech to Text", command=self.start_speech_to_text_thread)
+        speech_to_text_menu.add_command(label="Start Listening", command=self.start_speech_to_text_thread)
+        speech_to_text_menu.add_command(label="Stop Listening", command=self.stop_speech_to_text_thread)
         image_to_text_button = ttk.Button(button_frame, text="Image to Text", command=self.image_to_text, style='TButton')
         all_notes_button = ttk.Button(button_frame, text="All Notes", command=self.show_all_notes, style='TButton')
         image_to_text_button.grid(row=0, column=4, padx=5)
@@ -376,30 +377,34 @@ class NoteCraftApp:
     def start_speech_to_text_thread(self):
         threading.Thread(target=self.speech_to_text).start()
 
+    def stop_speech_to_text_thread(self):
+        threading.Thread(target=self.stop_speech_to_text).start()
+
+    def stop_speech_to_text(self):
+        self.listening = False
+
     def speech_to_text(self):
+        self.listening = True
         recognizer = vosk.KaldiRecognizer(vosk.Model(self.model_path), 16000)
         audio = pyaudio.PyAudio()
         stream = audio.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=1024)
         print("Listening...")
-        while True:
+        while self.listening: # Check if we should continue listening
             try:
                 data = stream.read(1024)
-                if len(data) == 0:
+                if len(data) < 0:
                     break
                 if recognizer.AcceptWaveform(data):
-                    result = recognizer.Result()
-                    result_dict = json.loads(result)
-                    if 'text' in result_dict:
-                        text = result_dict['text']
-                        self.root.after(0, lambda: self.note_text.insert(tk.END, text))
+                    result = json.loads(recognizer.Result())
+                    recognized_text = result['text']
+                    self.note_text.insert(tk.END, recognized_text)  # Insert recognized text into the text editor
+                    self.note_text.see(tk.END)  # Scroll to the end of the text editor
             except KeyboardInterrupt:
                 break
-            except Exception as e:
-                print(f"Error: {e}")
-        print("Stopped listening.")
         stream.stop_stream()
         stream.close()
         audio.terminate()
+        print("Speech to text stopped.")
     
     ###############################
     # Section: Image to Text Functions
