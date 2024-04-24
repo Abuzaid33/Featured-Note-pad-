@@ -70,7 +70,9 @@ class NoteCraftApp:
         self.all_files_path = "All Files"
         if not os.path.exists(self.all_files_path):
             os.makedirs(self.all_files_path)
-
+        root.bind('<Control-b>', lambda event: self.bold_text())
+        root.bind('<Control-I>', lambda event: self.italic_text())
+        root.bind('<Control-u>', lambda event: self.underline_text())
         ###############################
         # Add Scrollbar to Editor
         ###############################
@@ -102,8 +104,9 @@ class NoteCraftApp:
         speech_to_text_button.grid(row=0, column=3, padx=5)
         speech_to_text_menu = tk.Menu(speech_to_text_button, tearoff=0)
         speech_to_text_button.configure(menu=speech_to_text_menu)
-        speech_to_text_menu.add_command(label="Start Listening", command=self.start_speech_to_text_thread)
-        speech_to_text_menu.add_command(label="Stop Listening", command=self.stop_speech_to_text_thread)
+        speech_to_text_menu.add_command(label="Speech to text online", command=self.speech_to_text_online)
+        speech_to_text_menu.add_command(label="Start Listening Offline", command=self.start_speech_to_text_thread)
+        speech_to_text_menu.add_command(label="Stop Listening Offline", command=self.stop_speech_to_text_thread)
         image_to_text_button = ttk.Button(button_frame, text="Image to Text", command=self.image_to_text, style='TButton')
         all_notes_button = ttk.Button(button_frame, text="All Notes", command=self.show_all_notes, style='TButton')
         image_to_text_button.grid(row=0, column=4, padx=5)
@@ -389,7 +392,7 @@ class NoteCraftApp:
         audio = pyaudio.PyAudio()
         stream = audio.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=1024)
         print("Listening...")
-        while self.listening: # Check if we should continue listening
+        while self.listening: 
             try:
                 data = stream.read(1024)
                 if len(data) < 0:
@@ -397,15 +400,29 @@ class NoteCraftApp:
                 if recognizer.AcceptWaveform(data):
                     result = json.loads(recognizer.Result())
                     recognized_text = result['text']
-                    self.note_text.insert(tk.END, recognized_text)  # Insert recognized text into the text editor
-                    self.note_text.see(tk.END)  # Scroll to the end of the text editor
+                    self.note_text.insert(tk.END, recognized_text) 
+                    self.note_text.see(tk.END)
             except KeyboardInterrupt:
                 break
         stream.stop_stream()
         stream.close()
         audio.terminate()
         print("Speech to text stopped.")
-    
+    def speech_to_text_online(self):
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            print("Listening...")
+            audio = recognizer.listen(source)
+
+        try:
+            recognized_text = recognizer.recognize_google(audio)
+            self.note_text.insert(tk.END, recognized_text + "\n")
+            self.note_text.see(tk.END)
+            print("Speech to text (online) completed.")
+        except sr.UnknownValueError:
+            print("Could not understand audio")
+        except sr.RequestError as e:
+            print("Could not request results; {0}".format(e))
     ###############################
     # Section: Image to Text Functions
     ###############################
@@ -529,7 +546,7 @@ class NoteCraftApp:
         
 if __name__ == "__main__":
     root = tk.Tk()
-    app = NoteCraftApp(root, "vosk-model-small-en-in-0.4")
+    app = NoteCraftApp(root, "vosk")
     icon_path = "images/pic.png"  
     root.iconbitmap(icon_path)
     root.mainloop()
